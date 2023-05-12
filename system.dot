@@ -1,0 +1,42 @@
+digraph QueueSystem {
+    subgraph cluster_microservice {
+        graph [label = "Microservice";];
+        ms_main [label = "Main Thread(s)";];
+        ms_service [label = "Service Thread(s)";];
+    }
+
+    subgraph cluster_redis {
+        graph [label = "Redis";];
+        q_broker [label = "q:broker";];
+        q_list [label = "q:list";];
+        q_ms [label = "q:microservice_name";];
+        q_executing [label = "q:microservice_name:executing:uuid:thread_id";];
+        // no, really
+    }
+
+    subgraph cluster_broker {
+        graph [label = "Broker";];
+        br_main [label = "Broker Main Thread";];
+        br_recover [label = "Broker Recovery Thread";];
+    }
+
+    // SETUP SEGMENT
+    ms_service -> q_list [label = "announces availability";];
+
+    // MESSAGE SEND SEGMENT
+    ms_main -> q_broker [label = "writes new message";];
+
+    q_broker -> br_main [label = "constantly polls";];
+
+    br_main -> q_list [dir = "both"; label = "checks registered handlers";];
+
+    br_main -> q_ms [label = "pushes a copy of the message";];
+
+    // MESSAGE RECIEVE SEGMENT
+    q_ms -> ms_service [label = "constantly polls";];
+    ms_service -> q_executing [label = "writes every message";];
+
+    // RECOVERY
+    q_executing -> br_recover [label = "constantly trawls redis looking for keys";];
+    br_recover -> q_ms [label = "pushes lost messages";];
+}
