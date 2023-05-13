@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /*
  * Copyright 2023 Lexi Robinson
  *
