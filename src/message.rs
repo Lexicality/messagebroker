@@ -43,7 +43,7 @@ impl FromRedisValue for Message {
                 _ => return Err((redis::ErrorKind::TypeError, "uuid field is not a string").into()),
             },
         };
-        data["uuid"] = json!(uuid.to_string());
+        data.insert("uuid".to_owned(), json!(uuid.to_string()));
 
         let Some(JSONValue::String(message_type )) = data.get("message_type") else {
             return Err((redis::ErrorKind::TypeError, "message_type field is missing or invalid").into());
@@ -65,6 +65,137 @@ impl Message {
 
     pub fn set(&mut self, key: &'static str, value: JSONValue) {
         self.raw[key] = value;
-        if key == "only_for" {}
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Message;
+    use redis::{from_redis_value, ErrorKind as RedisErrorKind, Value as RedisValue};
+    use redis_test::IntoRedisValue;
+    use serde_json::Value as JSONValue;
+    use uuid::Uuid;
+
+    fn v<V: IntoRedisValue>(v: V) -> RedisValue {
+        v.into_redis_value()
+    }
+
+    #[test]
+    fn it_parses() {
+        let input = r#"
+		{
+			"message_type": "example"
+		}
+		"#;
+
+        let message: Message = from_redis_value(&v(input)).unwrap();
+
+        assert_eq!(message.message_type, "example");
+    }
+
+    #[test]
+    fn it_fails_on_invalid_json() {
+        let input = r#"
+		{
+			"message_type": "example"
+		"#;
+
+        let err = from_redis_value::<Message>(&v(input)).unwrap_err();
+
+        assert!(matches!(err.kind(), RedisErrorKind::Serialize));
+    }
+
+    #[test]
+    fn it_fails_on_wrong_json() {
+        let input = r#"
+		[
+			"message_type", "example"
+		]
+		"#;
+
+        let err = from_redis_value::<Message>(&v(input)).unwrap_err();
+
+        assert!(matches!(err.kind(), RedisErrorKind::TypeError));
+    }
+
+    #[test]
+    fn it_fails_for_missing_message_type() {
+        let input = r#"
+		{
+			"massage_type": "example"
+		}
+		"#;
+
+        let err = from_redis_value::<Message>(&v(input)).unwrap_err();
+
+        assert!(matches!(err.kind(), RedisErrorKind::TypeError));
+    }
+
+    #[test]
+    fn it_parses_uuids() {
+        let input = r#"
+		{
+			"message_type": "example",
+			"uuid": "00000000-0000-0000-0000-000000000000"
+		}
+		"#;
+
+        let message: Message = from_redis_value(&v(input)).unwrap();
+
+        assert_eq!(message.uuid, Uuid::from_u128(0));
+    }
+
+    #[test]
+    fn it_generates_uuids() {
+        let input = r#"
+		{
+			"message_type": "example"
+		}
+		"#;
+
+        let message: Message = from_redis_value(&v(input)).unwrap();
+
+        // Can't think of a way to test that this is a random value so I guess
+        // make sure it's not the default value?
+        assert_ne!(message.uuid, Uuid::nil());
+
+        // It updates the value in the raw event
+        let raw_uuid = &message.raw["uuid"];
+        let JSONValue::String(raw_uuid)  = raw_uuid else { panic!()};
+        assert_eq!(&message.uuid.to_string(), raw_uuid);
+    }
+
+    #[test]
+    fn it_validates_uuids() {
+        let input = r#"
+		{
+			"message_type": "example",
+			"uuid": "meow"
+		}
+		"#;
+
+        let err = from_redis_value::<Message>(&v(input)).unwrap_err();
+
+        assert!(matches!(err.kind(), RedisErrorKind::TypeError));
+    }
+
+    #[test]
+    fn it_reformats_uuids() {
+        let input = r#"
+		{
+			"message_type": "example",
+			"uuid": "00000000-0000-0000-0000-000000aAaAaA"
+		}
+		"#;
+
+        let message: Message = from_redis_value(&v(input)).unwrap();
+
+        assert_eq!(message.uuid, Uuid::from_u128(0xAAAAAA));
+
+        // It updates the value in the raw event
+        let raw_uuid = &message.raw["uuid"];
+        let JSONValue::String(raw_uuid)  = raw_uuid else { panic!()};
+        // The uuid is now lowercase
+        assert_eq!("00000000-0000-0000-0000-000000aaaaaa", raw_uuid);
     }
 }
