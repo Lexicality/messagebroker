@@ -184,6 +184,7 @@ dependencies = [
  "env_logger",
  "log",
  "redis",
+ "redis-test",
  "serde",
  "serde_json",
  "uuid",
@@ -228,6 +229,15 @@ dependencies = [
  "serde_json",
  "sha1_smol",
  "url",
+]
+
+[[package]]
+name = "redis-test"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a65cf43f8d361cb6351892d742c05935822ba3772530890ea5596edefa98d20"
+dependencies = [
+ "redis",
 ]
 
 [[package]]

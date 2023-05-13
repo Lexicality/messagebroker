@@ -24,6 +24,7 @@ const BROKER_QUEUE_KEY: &str = "q:broker";
 const FILTER_KEY: &str = "q:list";
 const POP_TIMEOUT: usize = Duration::from_secs(10).as_secs() as usize;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum HandlerFilter {
     AllMessages,
     SomeMessages(HashSet<String>),
@@ -155,4 +156,98 @@ pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) ->
     pipe.query(con)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test_get_handler_filters {
+    use super::{get_handler_filters, HandlerFilter, FILTER_KEY};
+    use redis::Value as RedisValue;
+    use redis_test::{IntoRedisValue, MockCmd, MockRedisConnection};
+
+    fn v2<V: IntoRedisValue + Copy>(vs: Vec<V>) -> RedisValue {
+        RedisValue::Bulk(vs.iter().map(|v| v.into_redis_value()).collect())
+    }
+
+    #[test]
+    fn it_loads_filters() {
+        let mut con = MockRedisConnection::new(vec![MockCmd::new(
+            redis::cmd("HGETALL").arg(FILTER_KEY),
+            Ok(v2(vec!["q:example", "example_type"])),
+        )]);
+
+        let res = get_handler_filters(&mut con).unwrap();
+
+        assert_eq!(res.len(), 1);
+        assert!(res.contains_key("q:example"))
+    }
+
+    #[test]
+    fn empty_strings_match_all() {
+        let mut con = MockRedisConnection::new(vec![MockCmd::new(
+            redis::cmd("HGETALL").arg(FILTER_KEY),
+            Ok(v2(vec!["q:example", ""])),
+        )]);
+
+        let res = get_handler_filters(&mut con).unwrap();
+
+        assert!(matches!(res["q:example"], HandlerFilter::AllMessages));
+    }
+
+    #[test]
+    fn single_handler() {
+        let mut con = MockRedisConnection::new(vec![MockCmd::new(
+            redis::cmd("HGETALL").arg(FILTER_KEY),
+            Ok(v2(vec!["q:example", "example_type"])),
+        )]);
+
+        let res = get_handler_filters(&mut con).unwrap();
+
+        let example = &res["q:example"];
+        assert!(matches!(example, HandlerFilter::SomeMessages(_)));
+
+        let HandlerFilter::SomeMessages(handlers) = example else { panic!() };
+        assert!(handlers.contains("example_type"));
+    }
+
+    #[test]
+    fn multiple_handlers() {
+        let mut con = MockRedisConnection::new(vec![MockCmd::new(
+            redis::cmd("HGETALL").arg(FILTER_KEY),
+            Ok(v2(vec!["q:example", "example_type1,example_type2"])),
+        )]);
+
+        let res = get_handler_filters(&mut con).unwrap();
+
+        let example = &res["q:example"];
+        assert!(matches!(example, HandlerFilter::SomeMessages(_)));
+
+        let HandlerFilter::SomeMessages(handlers) = example else { panic!() };
+        assert!(handlers.contains("example_type1"));
+        assert!(handlers.contains("example_type2"));
+    }
+
+    #[test]
+    fn crazy_spaces() {
+        let mut con = MockRedisConnection::new(vec![MockCmd::new(
+            redis::cmd("HGETALL").arg(FILTER_KEY),
+            Ok(v2(vec![
+                "q:example1",
+                "   example_type1 , example_type2  ",
+                "q:example2",
+                "   ",
+            ])),
+        )]);
+
+        let res = get_handler_filters(&mut con).unwrap();
+
+        let example1 = &res["q:example1"];
+        assert!(matches!(example1, HandlerFilter::SomeMessages(_)));
+
+        let HandlerFilter::SomeMessages(handlers) = example1 else { panic!() };
+        assert!(handlers.contains("example_type1"));
+        assert!(handlers.contains("example_type2"));
+
+        let example2 = &res["q:example2"];
+        assert!(matches!(example2, HandlerFilter::AllMessages));
+    }
 }
