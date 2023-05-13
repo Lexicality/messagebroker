@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use chrono::{DateTime, TimeZone, Utc};
 use redis::{from_redis_value, FromRedisValue, RedisResult, Value as RedisValue};
 use serde_json::{json, Value as JSONValue};
 use uuid::Uuid;
@@ -58,6 +59,9 @@ impl FromRedisValue for Message {
     }
 }
 
+// Because of course we use `str()` over `isoformat` with a naive datetime
+const PYTHON_TOSTR_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f%";
+
 impl Message {
     pub fn get(&self, key: &'static str) -> Option<&JSONValue> {
         self.raw.get(key)
@@ -99,6 +103,47 @@ impl Message {
 				None
 			},
         }
+    }
+
+    pub fn start_time(&self) -> Option<DateTime<Utc>> {
+        let start_time = self.get("start_time")?;
+        let start_time = match start_time {
+            JSONValue::String(v) => v,
+            _ => {
+                log::warn!(
+                    "Message {} ({}) has non-string value for 'start_time': '{:?}'",
+                    self.message_type,
+                    self.uuid,
+                    start_time
+                );
+                return None;
+            }
+        };
+        log::trace!("Attempting to parse date string {}", start_time);
+        // First vainly try parsing as RFC3339 in the hopes that some day our
+        // data won't be terrible
+        let res = DateTime::parse_from_rfc3339(start_time);
+        if let Ok(res) = res {
+            // amazing
+            log::trace!("It's RFC3339!");
+            return Some(res.into());
+        }
+        log::trace!("It's not RFC3339 :(");
+
+        // Now attempt to parse python's tostring implementation
+        let res = Utc.datetime_from_str(start_time, PYTHON_TOSTR_DATETIME_FORMAT);
+        if let Ok(res) = res {
+            log::trace!("It's python's highly stable tostring output");
+            return Some(res.into());
+        }
+
+        log::warn!(
+            "Message {} ({}) has invalid date value for 'start_time': '{}'",
+            self.message_type,
+            self.uuid,
+            start_time
+        );
+        return None;
     }
 }
 

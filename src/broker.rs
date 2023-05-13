@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 use crate::message::Message;
-use redis::{from_redis_value, Commands, ConnectionLike, RedisResult};
+use redis::{from_redis_value, Commands, ConnectionLike, ErrorKind as RedisErrorKind, RedisResult};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -23,6 +23,7 @@ use std::time::Duration;
 const BROKER_QUEUE_KEY: &str = "q:broker";
 const FILTER_KEY: &str = "q:list";
 const POP_TIMEOUT: usize = Duration::from_secs(10).as_secs() as usize;
+const RETRY_MESSAGES_AFTER: Duration = Duration::from_secs(12 * 60 * 60);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HandlerFilter {
@@ -120,6 +121,87 @@ pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) ->
     pipe.query(con)?;
 
     Ok(())
+}
+
+fn process_executing<C: ConnectionLike>(
+    key: &str,
+    con: &mut C,
+    pipe: &mut redis::Pipeline,
+) -> RedisResult<()> {
+    log::trace!("Checking message at {} to see if it's timed out", key);
+    let res = from_redis_value::<Message>(&con.get(key)?);
+    let message = match res {
+        Ok(message) => message,
+        Err(err) => match err.kind() {
+            RedisErrorKind::Serialize | RedisErrorKind::TypeError => {
+                log::warn!("The message at {} is invalid and has been deleted", key);
+                pipe.del(key);
+                return Ok(());
+            }
+            _ => return Err(err),
+        },
+    };
+    log::trace!(
+        "Found a {} message with uuid {}",
+        message.message_type,
+        message.uuid
+    );
+    let start_time = match message.start_time() {
+        Some(v) => v,
+        None => {
+            log::warn!(
+                "The {} ({}) message at {} doesn't have a valid start_time and has been deleted",
+                message.message_type,
+                message.uuid,
+                key
+            );
+            pipe.del(key);
+            return Ok(());
+        }
+    };
+
+    log::trace!("Processing started at {}", start_time);
+    let now = chrono::Utc::now();
+    let grace_period = chrono::Duration::from_std(RETRY_MESSAGES_AFTER).unwrap();
+    // Possibly this will break in 2038 but I think that'll be the least of our
+    // worries if this code is still somehow in production
+    if start_time.checked_add_signed(grace_period).unwrap() > now {
+        // Still plenty of time to process the message
+        log::trace!("Ignoring the message for now");
+        return Ok(());
+    }
+    log::trace!("Message is too old! Retrying!");
+
+    // Delete the message so we don't reprocess it
+    pipe.del(key);
+
+    if let Some(only_for) = message.only_for() {
+        let mut message = message.raw.clone();
+        // "//Override start_time" (??? - the service will do this itself)
+        message["start_time"] = json!(now.to_rfc3339());
+        let message = message.to_string();
+
+        // There should only be one value in `only_for` but there's no harm if
+        // it has more than one and it's less fuss to just iterate than attempt
+        // to deal with the edge case
+        for queue_name in only_for {
+            pipe.lpush(queue_name, message.clone());
+        }
+    } else {
+        // On the one hand, the `key` variable straight up has the queue name in
+        // it which we could extract, but on the other hand "this should never
+        // happen" since the broker sets this field on every message it sends
+        // out so I guess it's fine to have this case and Sentry should alert us
+        // if this warning starts going off
+        log::warn!(
+            "The {} ({}) message at {} doesn't have a valid 'only_for' field so we can't retry it",
+            message.message_type,
+            message.uuid,
+            key
+        );
+    }
+
+    return Ok(());
 }
 
 #[cfg(test)]
