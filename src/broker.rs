@@ -2,9 +2,11 @@ use crate::message::Message;
 use redis::{from_redis_value, Commands, ConnectionLike, RedisResult};
 use serde_json::{json, Value as JSONValue};
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 const BROKER_QUEUE_KEY: &str = "q:broker";
 const FILTER_KEY: &str = "q:list";
+const POP_TIMEOUT: usize = Duration::from_secs(10).as_secs() as usize;
 
 pub enum HandlerFilter {
     AllMessages,
@@ -100,7 +102,7 @@ fn get_queues_for_message<'a>(
 }
 
 pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) -> RedisResult<()> {
-    let message: Message = from_redis_value(&con.brpop(BROKER_QUEUE_KEY, 0)?)?;
+    let message: Message = from_redis_value(&con.brpop(BROKER_QUEUE_KEY, POP_TIMEOUT)?)?;
 
     log::trace!(
         "Recieved {} message: {:?}",
