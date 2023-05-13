@@ -50,11 +50,30 @@ fn get_queues_for_message<'a>(
             }
             JSONValue::Array(only_for) => {
                 log::trace!("Message specifies it's only for {:?}", only_for);
-                return Box::new(only_for.iter().filter_map(|queue_name| match queue_name {
-                    JSONValue::String(queue_name) => {
-                        handlers.contains_key(queue_name).then_some(queue_name)
+                return Box::new(only_for.iter().filter_map(|queue_name| {
+                    match queue_name {
+                        JSONValue::String(queue_name) => handlers
+                            .contains_key(queue_name)
+                            .then_some(queue_name)
+                            .or_else(|| {
+                                log::warn!(
+                                    "Message {} ({}) has 'only_for' containing unknown queue '{}'",
+                                    message.message_type,
+                                    message.uuid,
+                                    queue_name
+                                );
+                                None
+                            }),
+                        _ => {
+                            log::warn!(
+                                "Message {} ({}) has 'only_for' containing non-string value: '{:?}'",
+                                message.message_type,
+                                message.uuid,
+                                queue_name
+                            );
+                            None
+                        }
                     }
-                    _ => None,
                 }));
             }
             _ => {
@@ -83,12 +102,36 @@ fn get_queues_for_message<'a>(
 pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) -> RedisResult<()> {
     let message: Message = from_redis_value(&con.brpop(BROKER_QUEUE_KEY, 0)?)?;
 
-    let mut pipe = redis::pipe();
+    log::trace!(
+        "Recieved {} message: {:?}",
+        message.message_type,
+        message.raw,
+    );
 
-    for queue_name in get_queues_for_message(&message, handlers) {
+    let queues = get_queues_for_message(&message, handlers);
+    let size = queues.size_hint();
+
+    let mut pipe = redis::Pipeline::with_capacity(size.1.unwrap_or(size.0));
+
+    for queue_name in queues {
+        log::trace!(
+            "Sending message {} ({}) to {}",
+            message.message_type,
+            message.uuid,
+            queue_name
+        );
         let mut message_to_send = message.raw.clone();
         message_to_send["only_for"] = json!(queue_name);
         pipe.lpush(queue_name, message_to_send.to_string()).ignore();
+    }
+
+    if pipe.cmd_iter().count() == 0 {
+        log::trace!(
+            "Message {} ({}) doesn't match any handlers",
+            message.message_type,
+            message.uuid
+        );
+        return Ok(());
     }
 
     pipe.query(con)?;
