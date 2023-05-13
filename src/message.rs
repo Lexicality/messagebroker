@@ -66,10 +66,44 @@ impl Message {
     pub fn set(&mut self, key: &'static str, value: JSONValue) {
         self.raw[key] = value;
     }
+
+    pub fn only_for(&self) -> Option<Vec<&String>> {
+        let value = self.get("only_for")?;
+        match value {
+            JSONValue::String(str) => Some(vec![str]),
+            JSONValue::Array(arr) => Some(
+                arr.iter()
+                    .filter_map(|value| {
+                        match value {
+                            JSONValue::String(str) => Some(str),
+                            _ => {
+                                log::warn!(
+                                    "Message {} ({}) has 'only_for' containing non-string value: '{:?}'",
+                                    self.message_type,
+                                    self.uuid,
+                                    value
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .collect(),
+            ),
+            _ => {
+				log::warn!(
+					"Message {} ({}) has non-string 'only_for' value: '{:?}'",
+					self.message_type,
+					self.uuid,
+					value
+				);
+				None
+			},
+        }
+    }
 }
 
 #[cfg(test)]
-mod test {
+mod test_from_redis_value {
     use super::Message;
     use redis::{from_redis_value, ErrorKind as RedisErrorKind, Value as RedisValue};
     use redis_test::IntoRedisValue;
@@ -197,5 +231,75 @@ mod test {
         let JSONValue::String(raw_uuid)  = raw_uuid else { panic!()};
         // The uuid is now lowercase
         assert_eq!("00000000-0000-0000-0000-000000aaaaaa", raw_uuid);
+    }
+}
+
+#[cfg(test)]
+mod test_only_for {
+    use super::Message;
+    use redis::from_redis_value;
+    use redis_test::IntoRedisValue;
+
+    fn json_to_msg(input: &str) -> Message {
+        return from_redis_value(&(input.into_redis_value())).unwrap();
+    }
+
+    #[test]
+    fn it_works() {
+        let message = json_to_msg(
+            r#"{
+				"message_type": "example",
+				"only_for": ["foo"]
+			}"#,
+        );
+
+        assert_eq!(message.only_for().unwrap(), vec!["foo"]);
+    }
+
+    #[test]
+    fn it_accepts_strings() {
+        let message = json_to_msg(
+            r#"{
+				"message_type": "example",
+				"only_for": "foo"
+			}"#,
+        );
+
+        assert_eq!(message.only_for().unwrap(), vec!["foo"]);
+    }
+
+    #[test]
+    fn it_handles_missing() {
+        let message = json_to_msg(
+            r#"{
+				"message_type": "example"
+			}"#,
+        );
+
+        assert!(message.only_for().is_none());
+    }
+
+    #[test]
+    fn it_handles_wrong() {
+        let message = json_to_msg(
+            r#"{
+				"message_type": "example",
+				"only_for": {"foo": "bar"}
+			}"#,
+        );
+
+        assert!(message.only_for().is_none());
+    }
+
+    #[test]
+    fn it_discards_non_strings() {
+        let message = json_to_msg(
+            r#"{
+				"message_type": "example",
+				"only_for": ["foo", 7, "bar"]
+			}"#,
+        );
+
+        assert_eq!(message.only_for().unwrap(), vec!["foo", "bar"]);
     }
 }

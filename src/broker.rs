@@ -16,7 +16,7 @@
  */
 use crate::message::Message;
 use redis::{from_redis_value, Commands, ConnectionLike, RedisResult};
-use serde_json::{json, Value as JSONValue};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -50,72 +50,37 @@ pub fn get_handler_filters<C: ConnectionLike>(con: &mut C) -> RedisResult<Handle
 fn get_queues_for_message<'a>(
     message: &'a Message,
     handlers: &'a HandlerFilters,
-) -> Box<dyn Iterator<Item = &'a String> + 'a> {
-    let only_for = message.get("only_for");
+) -> Vec<&'a String> {
+    let only_for = message.only_for();
     if let Some(only_for) = only_for {
-        match only_for {
-            JSONValue::String(queue_name) => {
-                log::trace!("Message specifies it's only for {}", queue_name);
-                if handlers.contains_key(queue_name) {
-                    return Box::new(std::iter::once(queue_name));
-                }
-                log::warn!(
-                    "Message {} ({}) has 'only_for' set to unknown queue '{}'",
-                    message.message_type,
-                    message.uuid,
-                    queue_name
-                );
-                return Box::new(std::iter::empty());
-            }
-            JSONValue::Array(only_for) => {
-                log::trace!("Message specifies it's only for {:?}", only_for);
-                return Box::new(only_for.iter().filter_map(|queue_name| {
-                    match queue_name {
-                        JSONValue::String(queue_name) => handlers
-                            .contains_key(queue_name)
-                            .then_some(queue_name)
-                            .or_else(|| {
-                                log::warn!(
-                                    "Message {} ({}) has 'only_for' containing unknown queue '{}'",
-                                    message.message_type,
-                                    message.uuid,
-                                    queue_name
-                                );
-                                None
-                            }),
-                        _ => {
-                            log::warn!(
-                                "Message {} ({}) has 'only_for' containing non-string value: '{:?}'",
-                                message.message_type,
-                                message.uuid,
-                                queue_name
-                            );
-                            None
-                        }
-                    }
-                }));
-            }
-            _ => {
-                log::warn!(
-                    "Message {} ({}) has invalid 'only_for' field: '{:?}'",
-                    message.message_type,
-                    message.uuid,
-                    only_for
-                );
-            }
-        }
-    }
-
-    return Box::new(
-        handlers
+        return only_for
             .iter()
-            .filter_map(|(queue_name, filter)| match filter {
-                HandlerFilter::AllMessages => Some(queue_name),
-                HandlerFilter::SomeMessages(filter) => {
-                    filter.contains(&message.message_type).then_some(queue_name)
-                }
-            }),
-    );
+            .filter_map(|queue_name| {
+                handlers
+                    .contains_key(*queue_name)
+                    .then_some(*queue_name)
+                    .or_else(|| {
+                        log::warn!(
+                            "Message {} ({}) has 'only_for' containing unknown queue '{}'",
+                            message.message_type,
+                            message.uuid,
+                            queue_name
+                        );
+                        None
+                    })
+            })
+            .collect();
+    };
+
+    return handlers
+        .iter()
+        .filter_map(|(queue_name, filter)| match filter {
+            HandlerFilter::AllMessages => Some(queue_name),
+            HandlerFilter::SomeMessages(filter) => {
+                filter.contains(&message.message_type).then_some(queue_name)
+            }
+        })
+        .collect();
 }
 
 pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) -> RedisResult<()> {
@@ -128,9 +93,17 @@ pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) ->
     );
 
     let queues = get_queues_for_message(&message, handlers);
-    let size = queues.size_hint();
+    let size = queues.len();
+    if size == 0 {
+        log::trace!(
+            "Message {} ({}) doesn't match any handlers",
+            message.message_type,
+            message.uuid
+        );
+        return Ok(());
+    }
 
-    let mut pipe = redis::Pipeline::with_capacity(size.1.unwrap_or(size.0));
+    let mut pipe = redis::Pipeline::with_capacity(size);
 
     for queue_name in queues {
         log::trace!(
@@ -142,15 +115,6 @@ pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) ->
         let mut message_to_send = message.raw.clone();
         message_to_send["only_for"] = json!(queue_name);
         pipe.lpush(queue_name, message_to_send.to_string()).ignore();
-    }
-
-    if pipe.cmd_iter().count() == 0 {
-        log::trace!(
-            "Message {} ({}) doesn't match any handlers",
-            message.message_type,
-            message.uuid
-        );
-        return Ok(());
     }
 
     pipe.query(con)?;
