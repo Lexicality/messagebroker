@@ -1,4 +1,4 @@
-use redis::{from_redis_value, FromRedisValue};
+use redis::{from_redis_value, FromRedisValue, RedisResult, Value as RedisValue};
 use serde_json::{json, Value as JSONValue};
 use uuid::Uuid;
 
@@ -10,7 +10,7 @@ pub struct Message {
 }
 
 impl FromRedisValue for Message {
-    fn from_redis_value(raw: &redis::Value) -> redis::RedisResult<Self> {
+    fn from_redis_value(raw: &RedisValue) -> RedisResult<Self> {
         let raw: String = from_redis_value(raw)?;
         let mut raw: JSONValue = serde_json::from_str(&raw)?;
 

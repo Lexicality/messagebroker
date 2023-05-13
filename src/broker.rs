@@ -1,5 +1,5 @@
 use crate::message::Message;
-use redis::{from_redis_value, Commands, RedisResult};
+use redis::{from_redis_value, Commands, ConnectionLike, RedisResult};
 use serde_json::{json, Value as JSONValue};
 use std::collections::{HashMap, HashSet};
 
@@ -12,7 +12,7 @@ pub enum HandlerFilter {
 }
 pub type HandlerFilters = HashMap<String, HandlerFilter>;
 
-pub fn get_handler_filters(con: &mut redis::Connection) -> RedisResult<HandlerFilters> {
+pub fn get_handler_filters<C: ConnectionLike>(con: &mut C) -> RedisResult<HandlerFilters> {
     let res = con.hgetall(FILTER_KEY)?;
     let res: HashMap<String, String> = from_redis_value(&res)?;
     Ok(res
@@ -80,7 +80,7 @@ fn get_queues_for_message<'a>(
     );
 }
 
-pub fn process_one(con: &mut redis::Connection, handlers: &HandlerFilters) -> RedisResult<()> {
+pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) -> RedisResult<()> {
     let message: Message = from_redis_value(&con.brpop(BROKER_QUEUE_KEY, 0)?)?;
 
     let mut pipe = redis::pipe();
