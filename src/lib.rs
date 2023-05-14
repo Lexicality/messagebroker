@@ -13,6 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use redis::ConnectionLike;
+use std::time::Duration;
+
+const WAIT_DURATION: Duration = Duration::from_secs(10);
+
 pub mod broker;
 pub mod config;
 mod message;
+
+pub fn wait_for_redis<C: ConnectionLike>(con: &mut C) {
+    log::trace!("Waiting for Redis to be available");
+    loop {
+        let res = redis::cmd("PING").query::<String>(con);
+        match res {
+            Ok(pong) => {
+                if pong == "PONG" {
+                    log::trace!("Connected!");
+                    return;
+                }
+                log::trace!("Got unexpected pong response: {}", pong);
+            }
+            Err(err) => {
+                log::trace!("Got error connecting to redis: {}", err);
+            }
+        }
+        log::trace!("Sleeping for {} seconds", WAIT_DURATION.as_secs());
+        std::thread::sleep(WAIT_DURATION);
+    }
+}
