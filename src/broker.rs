@@ -189,6 +189,7 @@ fn process_executing<C: ConnectionLike>(
         // it has more than one and it's less fuss to just iterate than attempt
         // to deal with the edge case
         for queue_name in only_for {
+            log::trace!("Sending message to queue {}", queue_name);
             pipe.lpush(queue_name, message.clone());
         }
     } else {
@@ -217,8 +218,6 @@ fn check_executing_batch<C: ConnectionLike>(
         .arg(last_cursor)
         .arg("MATCH")
         .arg("q:*:executing:*")
-        .arg("TYPE")
-        .arg("string")
         .query(con)?;
 
     let (next_cursor, batch) = from_redis_value::<(u64, Vec<String>)>(&res)?;

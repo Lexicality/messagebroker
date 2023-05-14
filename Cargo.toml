@@ -7,8 +7,10 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.24"
+ctrlc = { version = "3.2.5", features = ["termination"] }
 env_logger = "0.10.0"
 envy = "0.4.2"
+gethostname = "0.4.3"
 log = "0.4.17"
 redis = { version = "0.23.0", features = ["log", "serde_json", "json"] }
 redis-test = "0.2.0"

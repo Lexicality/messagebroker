@@ -21,16 +21,19 @@ use url::Url;
 #[derive(Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "default_redis_url")]
-    reids_url: Url,
+    pub redis_url: Url,
 
     #[serde(default = "default_broker_queue_key")]
-    broker_queue_key: String,
+    pub broker_queue_key: String,
 
     #[serde(default = "default_filter_key")]
-    filter_key: String,
+    pub filter_key: String,
 
     #[serde(default = "default_retry_after")]
-    retry_messages_after: Duration,
+    pub retry_messages_after: Duration,
+
+    #[serde(default = "default_retry_interval")]
+    pub retry_handler_interval: Duration,
 }
 
 fn default_redis_url() -> Url {
@@ -52,6 +55,10 @@ fn default_retry_after() -> Duration {
     // 12 hours seems like it's long enough to cause exciting problems around data
     // consistency but who am I to judge genius?
     Duration::from_secs(12 * 60 * 60)
+}
+
+fn default_retry_interval() -> Duration {
+    Duration::from_secs(60)
 }
 
 pub fn get_config() -> Config {
