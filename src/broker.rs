@@ -201,7 +201,7 @@ fn process_executing<C: ConnectionLike>(
         );
     }
 
-    return Ok(());
+    Ok(())
 }
 
 fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> RedisResult<u64> {
@@ -234,7 +234,7 @@ fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> Re
         log::trace!("No keys needed to be retried");
     }
 
-    return Ok(next_cursor);
+    Ok(next_cursor)
 }
 
 pub fn check_for_retries<C: ConnectionLike>(con: &mut C) -> RedisResult<()> {

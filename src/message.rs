@@ -134,7 +134,7 @@ impl Message {
         let res = Utc.datetime_from_str(start_time, PYTHON_TOSTR_DATETIME_FORMAT);
         if let Ok(res) = res {
             log::trace!("It's python's highly stable tostring output");
-            return Some(res.into());
+            return Some(res);
         }
 
         log::warn!(
@@ -143,7 +143,8 @@ impl Message {
             self.uuid,
             start_time
         );
-        return None;
+
+        None
     }
 }
 
@@ -286,7 +287,7 @@ mod test_only_for {
     use redis_test::IntoRedisValue;
 
     fn json_to_msg(input: &str) -> Message {
-        return from_redis_value(&(input.into_redis_value())).unwrap();
+        from_redis_value(&(input.into_redis_value())).unwrap()
     }
 
     #[test]
