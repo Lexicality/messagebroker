@@ -99,7 +99,7 @@ pub fn process_one<C: ConnectionLike>(
     let queues = get_queues_for_message(&message, handlers);
     let size = queues.len();
     if size == 0 {
-        log::trace!(
+        log::debug!(
             "Message {} ({}) doesn't match any handlers",
             message.message_type,
             message.uuid
@@ -132,7 +132,7 @@ fn process_executing<C: ConnectionLike>(
     con: &mut C,
     pipe: &mut redis::Pipeline,
 ) -> RedisResult<()> {
-    log::trace!("Checking message at {} to see if it's timed out", key);
+    log::debug!("Checking message at {} to see if it's timed out", key);
     let res = from_redis_value::<Message>(&con.get(key)?);
     let message = match res {
         Ok(message) => message,
@@ -171,10 +171,10 @@ fn process_executing<C: ConnectionLike>(
     // worries if this code is still somehow in production
     if start_time.checked_add_signed(grace_period).unwrap() > now {
         // Still plenty of time to process the message
-        log::trace!("Ignoring the message for now");
+        log::debug!("Ignoring the message for now");
         return Ok(());
     }
-    log::trace!("Message is too old! Retrying!");
+    log::debug!("Message is too old! Retrying!");
 
     // Delete the message so we don't reprocess it
     pipe.del(key);
@@ -247,14 +247,14 @@ fn check_executing_batch<C: ConnectionLike>(
 
 pub fn check_for_retries<C: ConnectionLike>(retry_after: Duration, con: &mut C) -> RedisResult<()> {
     let mut cursor = 0;
-    log::trace!("Searching for currently executing entries");
+    log::debug!("Searching for currently executing entries");
     loop {
         cursor = check_executing_batch(cursor, retry_after, con)?;
         if cursor == 0 {
             break;
         }
     }
-    log::trace!("Done");
+    log::debug!("Done");
     Ok(())
 }
 
