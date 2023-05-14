@@ -31,8 +31,8 @@ impl FromRedisValue for Message {
         let mut raw: JSONValue = serde_json::from_str(&raw)?;
 
         let JSONValue::Object(ref mut data) = raw else {
-			return Err((redis::ErrorKind::TypeError, "not a dictionary").into())
-		};
+            return Err((redis::ErrorKind::TypeError, "not a dictionary").into())
+        };
 
         let uuid = match data.get("uuid") {
             None => Uuid::new_v4(),
@@ -89,14 +89,14 @@ impl Message {
                     .collect(),
             ),
             _ => {
-				log::warn!(
-					"Message {} ({}) has non-string 'only_for' value: '{:?}'",
-					self.message_type,
-					self.uuid,
-					value
-				);
-				None
-			},
+                log::warn!(
+                    "Message {} ({}) has non-string 'only_for' value: '{:?}'",
+                    self.message_type,
+                    self.uuid,
+                    value
+                );
+                None
+            },
         }
     }
 
@@ -158,10 +158,10 @@ mod test_from_redis_value {
     #[test]
     fn it_parses() {
         let input = r#"
-		{
-			"message_type": "example"
-		}
-		"#;
+        {
+            "message_type": "example"
+        }
+        "#;
 
         let message: Message = from_redis_value(&v(input)).unwrap();
 
@@ -171,9 +171,9 @@ mod test_from_redis_value {
     #[test]
     fn it_fails_on_invalid_json() {
         let input = r#"
-		{
-			"message_type": "example"
-		"#;
+        {
+            "message_type": "example"
+        "#;
 
         let err = from_redis_value::<Message>(&v(input)).unwrap_err();
 
@@ -183,10 +183,10 @@ mod test_from_redis_value {
     #[test]
     fn it_fails_on_wrong_json() {
         let input = r#"
-		[
-			"message_type", "example"
-		]
-		"#;
+        [
+            "message_type", "example"
+        ]
+        "#;
 
         let err = from_redis_value::<Message>(&v(input)).unwrap_err();
 
@@ -196,10 +196,10 @@ mod test_from_redis_value {
     #[test]
     fn it_fails_for_missing_message_type() {
         let input = r#"
-		{
-			"massage_type": "example"
-		}
-		"#;
+        {
+            "massage_type": "example"
+        }
+        "#;
 
         let err = from_redis_value::<Message>(&v(input)).unwrap_err();
 
@@ -209,11 +209,11 @@ mod test_from_redis_value {
     #[test]
     fn it_parses_uuids() {
         let input = r#"
-		{
-			"message_type": "example",
-			"uuid": "00000000-0000-0000-0000-000000000000"
-		}
-		"#;
+        {
+            "message_type": "example",
+            "uuid": "00000000-0000-0000-0000-000000000000"
+        }
+        "#;
 
         let message: Message = from_redis_value(&v(input)).unwrap();
 
@@ -223,10 +223,10 @@ mod test_from_redis_value {
     #[test]
     fn it_generates_uuids() {
         let input = r#"
-		{
-			"message_type": "example"
-		}
-		"#;
+        {
+            "message_type": "example"
+        }
+        "#;
 
         let message: Message = from_redis_value(&v(input)).unwrap();
 
@@ -243,11 +243,11 @@ mod test_from_redis_value {
     #[test]
     fn it_validates_uuids() {
         let input = r#"
-		{
-			"message_type": "example",
-			"uuid": "meow"
-		}
-		"#;
+        {
+            "message_type": "example",
+            "uuid": "meow"
+        }
+        "#;
 
         let err = from_redis_value::<Message>(&v(input)).unwrap_err();
 
@@ -257,11 +257,11 @@ mod test_from_redis_value {
     #[test]
     fn it_reformats_uuids() {
         let input = r#"
-		{
-			"message_type": "example",
-			"uuid": "00000000-0000-0000-0000-000000aAaAaA"
-		}
-		"#;
+        {
+            "message_type": "example",
+            "uuid": "00000000-0000-0000-0000-000000aAaAaA"
+        }
+        "#;
 
         let message: Message = from_redis_value(&v(input)).unwrap();
 
@@ -289,9 +289,9 @@ mod test_only_for {
     fn it_works() {
         let message = json_to_msg(
             r#"{
-				"message_type": "example",
-				"only_for": ["foo"]
-			}"#,
+                "message_type": "example",
+                "only_for": ["foo"]
+            }"#,
         );
 
         assert_eq!(message.only_for().unwrap(), vec!["foo"]);
@@ -301,9 +301,9 @@ mod test_only_for {
     fn it_accepts_strings() {
         let message = json_to_msg(
             r#"{
-				"message_type": "example",
-				"only_for": "foo"
-			}"#,
+                "message_type": "example",
+                "only_for": "foo"
+            }"#,
         );
 
         assert_eq!(message.only_for().unwrap(), vec!["foo"]);
@@ -313,8 +313,8 @@ mod test_only_for {
     fn it_handles_missing() {
         let message = json_to_msg(
             r#"{
-				"message_type": "example"
-			}"#,
+                "message_type": "example"
+            }"#,
         );
 
         assert!(message.only_for().is_none());
@@ -324,9 +324,9 @@ mod test_only_for {
     fn it_handles_wrong() {
         let message = json_to_msg(
             r#"{
-				"message_type": "example",
-				"only_for": {"foo": "bar"}
-			}"#,
+                "message_type": "example",
+                "only_for": {"foo": "bar"}
+            }"#,
         );
 
         assert!(message.only_for().is_none());
@@ -336,9 +336,9 @@ mod test_only_for {
     fn it_discards_non_strings() {
         let message = json_to_msg(
             r#"{
-				"message_type": "example",
-				"only_for": ["foo", 7, "bar"]
-			}"#,
+                "message_type": "example",
+                "only_for": ["foo", 7, "bar"]
+            }"#,
         );
 
         assert_eq!(message.only_for().unwrap(), vec!["foo", "bar"]);
