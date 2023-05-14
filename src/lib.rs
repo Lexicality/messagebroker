@@ -52,31 +52,20 @@ pub fn get_redis_connection(client: &mut redis::Client, name: &str) -> redis::Co
         "Attempting to connect to Redis with info {:?}",
         client.get_connection_info()
     );
-    let res = get_and_validate_connection(client, name);
-    match res {
-        Ok(con) => return con,
-        Err(err) => {
-            // An invalid client config is non-recoverable
-            if err.kind() == redis::ErrorKind::InvalidClientConfig {
-                panic!("Could not connect to redis: {}", err);
-            }
-            log::info!("Failed to connect to redis: {}", err);
-        }
-    }
-    log::info!("Waiting for Redis to be available");
     loop {
-        log::trace!("Sleeping for {} seconds", WAIT_DURATION.as_secs());
-        std::thread::sleep(WAIT_DURATION);
         let res = get_and_validate_connection(client, name);
         match res {
             Ok(con) => return con,
             Err(err) => {
-                // Working on the assumption that we can't get an invalid config
-                // error the second time around so it's safe to just log and
-                // sleep forever
+                // An invalid client config is non-recoverable
+                if err.kind() == redis::ErrorKind::InvalidClientConfig {
+                    panic!("Could not connect to redis: {}", err);
+                }
                 log::info!("Failed to connect to redis: {}", err);
             }
         }
+        log::trace!("Sleeping for {} seconds", WAIT_DURATION.as_secs());
+        std::thread::sleep(WAIT_DURATION);
     }
 }
 
