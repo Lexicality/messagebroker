@@ -101,6 +101,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "envy"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f47e0157f2cb54f5ae1bd371b30a2ae4311e1c028f575cd4e81de7353215965"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -257,11 +266,13 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "env_logger",
+ "envy",
  "log",
  "redis",
  "redis-test",
  "serde",
  "serde_json",
+ "url",
  "uuid",
 ]
 
@@ -490,6 +501,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]

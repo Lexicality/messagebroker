@@ -13,5 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-mod broker;
+pub mod broker;
+pub mod config;
 mod message;

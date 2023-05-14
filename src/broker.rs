@@ -20,11 +20,6 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-const BROKER_QUEUE_KEY: &str = "q:broker";
-const FILTER_KEY: &str = "q:list";
-const POP_TIMEOUT: usize = Duration::from_secs(10).as_secs() as usize;
-const RETRY_MESSAGES_AFTER: Duration = Duration::from_secs(12 * 60 * 60);
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum HandlerFilter {
     AllMessages,
@@ -32,8 +27,11 @@ pub enum HandlerFilter {
 }
 pub type HandlerFilters = HashMap<String, HandlerFilter>;
 
-pub fn get_handler_filters<C: ConnectionLike>(con: &mut C) -> RedisResult<HandlerFilters> {
-    let res = con.hgetall(FILTER_KEY)?;
+pub fn get_handler_filters<C: ConnectionLike>(
+    filter_key: &str,
+    con: &mut C,
+) -> RedisResult<HandlerFilters> {
+    let res = con.hgetall(filter_key)?;
     let res: HashMap<String, String> = from_redis_value(&res)?;
     Ok(res
         .iter()
@@ -84,8 +82,13 @@ fn get_queues_for_message<'a>(
         .collect();
 }
 
-pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) -> RedisResult<()> {
-    let message: Message = from_redis_value(&con.brpop(BROKER_QUEUE_KEY, POP_TIMEOUT)?)?;
+pub fn process_one<C: ConnectionLike>(
+    queue_key: &str,
+    timeout: usize,
+    con: &mut C,
+    handlers: &HandlerFilters,
+) -> RedisResult<()> {
+    let message: Message = from_redis_value(&con.brpop(queue_key, timeout)?)?;
 
     log::trace!(
         "Recieved {} message: {:?}",
@@ -125,6 +128,7 @@ pub fn process_one<C: ConnectionLike>(con: &mut C, handlers: &HandlerFilters) ->
 
 fn process_executing<C: ConnectionLike>(
     key: &str,
+    retry_after: Duration,
     con: &mut C,
     pipe: &mut redis::Pipeline,
 ) -> RedisResult<()> {
@@ -162,7 +166,7 @@ fn process_executing<C: ConnectionLike>(
 
     log::trace!("Processing started at {}", start_time);
     let now = chrono::Utc::now();
-    let grace_period = chrono::Duration::from_std(RETRY_MESSAGES_AFTER).unwrap();
+    let grace_period = chrono::Duration::from_std(retry_after).unwrap();
     // Possibly this will break in 2038 but I think that'll be the least of our
     // worries if this code is still somehow in production
     if start_time.checked_add_signed(grace_period).unwrap() > now {
@@ -204,7 +208,11 @@ fn process_executing<C: ConnectionLike>(
     Ok(())
 }
 
-fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> RedisResult<u64> {
+fn check_executing_batch<C: ConnectionLike>(
+    last_cursor: u64,
+    retry_after: Duration,
+    con: &mut C,
+) -> RedisResult<u64> {
     let res = redis::cmd("SCAN")
         .arg(last_cursor)
         .arg("MATCH")
@@ -225,7 +233,7 @@ fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> Re
     let mut pipe = redis::Pipeline::with_capacity(batch_size * 2);
 
     for key in batch {
-        process_executing(&key, con, &mut pipe)?;
+        process_executing(&key, retry_after, con, &mut pipe)?;
     }
 
     if pipe.cmd_iter().count() > 0 {
@@ -237,11 +245,11 @@ fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> Re
     Ok(next_cursor)
 }
 
-pub fn check_for_retries<C: ConnectionLike>(con: &mut C) -> RedisResult<()> {
+pub fn check_for_retries<C: ConnectionLike>(retry_after: Duration, con: &mut C) -> RedisResult<()> {
     let mut cursor = 0;
     log::trace!("Searching for currently executing entries");
     loop {
-        cursor = check_executing_batch(cursor, con)?;
+        cursor = check_executing_batch(cursor, retry_after, con)?;
         if cursor == 0 {
             break;
         }
@@ -252,13 +260,15 @@ pub fn check_for_retries<C: ConnectionLike>(con: &mut C) -> RedisResult<()> {
 
 #[cfg(test)]
 mod test_get_handler_filters {
-    use super::{get_handler_filters, HandlerFilter, FILTER_KEY};
+    use super::{get_handler_filters, HandlerFilter};
     use redis::Value as RedisValue;
     use redis_test::{IntoRedisValue, MockCmd, MockRedisConnection};
 
     fn v2<V: IntoRedisValue + Copy>(vs: Vec<V>) -> RedisValue {
         RedisValue::Bulk(vs.iter().map(|v| v.into_redis_value()).collect())
     }
+
+    const FILTER_KEY: &str = "q:example";
 
     #[test]
     fn it_loads_filters() {
@@ -267,7 +277,7 @@ mod test_get_handler_filters {
             Ok(v2(vec!["q:example", "example_type"])),
         )]);
 
-        let res = get_handler_filters(&mut con).unwrap();
+        let res = get_handler_filters(FILTER_KEY, &mut con).unwrap();
 
         assert_eq!(res.len(), 1);
         assert!(res.contains_key("q:example"))
@@ -280,7 +290,7 @@ mod test_get_handler_filters {
             Ok(v2(vec!["q:example", ""])),
         )]);
 
-        let res = get_handler_filters(&mut con).unwrap();
+        let res = get_handler_filters(FILTER_KEY, &mut con).unwrap();
 
         assert!(matches!(res["q:example"], HandlerFilter::AllMessages));
     }
@@ -292,7 +302,7 @@ mod test_get_handler_filters {
             Ok(v2(vec!["q:example", "example_type"])),
         )]);
 
-        let res = get_handler_filters(&mut con).unwrap();
+        let res = get_handler_filters(FILTER_KEY, &mut con).unwrap();
 
         let example = &res["q:example"];
         assert!(matches!(example, HandlerFilter::SomeMessages(_)));
@@ -308,7 +318,7 @@ mod test_get_handler_filters {
             Ok(v2(vec!["q:example", "example_type1,example_type2"])),
         )]);
 
-        let res = get_handler_filters(&mut con).unwrap();
+        let res = get_handler_filters(FILTER_KEY, &mut con).unwrap();
 
         let example = &res["q:example"];
         assert!(matches!(example, HandlerFilter::SomeMessages(_)));
@@ -330,7 +340,7 @@ mod test_get_handler_filters {
             ])),
         )]);
 
-        let res = get_handler_filters(&mut con).unwrap();
+        let res = get_handler_filters(FILTER_KEY, &mut con).unwrap();
 
         let example1 = &res["q:example1"];
         assert!(matches!(example1, HandlerFilter::SomeMessages(_)));
