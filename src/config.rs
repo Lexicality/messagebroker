@@ -34,6 +34,9 @@ pub struct Config {
 
     #[serde(default = "default_retry_interval")]
     pub retry_handler_interval: Duration,
+
+    #[serde(default = "default_filter_update_interval")]
+    pub filter_update_interval: Duration,
 }
 
 fn default_redis_url() -> Url {
@@ -59,6 +62,10 @@ fn default_retry_after() -> Duration {
 
 fn default_retry_interval() -> Duration {
     Duration::from_secs(60)
+}
+
+fn default_filter_update_interval() -> Duration {
+    Duration::from_secs(5)
 }
 
 pub fn get_config() -> Config {

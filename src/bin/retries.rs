@@ -17,10 +17,11 @@
 use gethostname::gethostname;
 use messagebroker::broker::check_for_retries;
 use messagebroker::config::Config;
+use messagebroker::sleep_safe;
 use messagebroker::{config::get_config, get_redis_connection};
 use redis::{Client, RedisResult};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, RecvTimeoutError};
+use std::sync::mpsc::channel;
 
 fn do_retry_check(client: &mut Client, config: &Config, client_name: &str) -> RedisResult<()> {
     // This check happens so infrequently it's more efficient to start a new
@@ -33,10 +34,11 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let (tx, rx) = channel();
-    let already_killed = AtomicBool::new(false);
+    let shutdown = AtomicBool::new(false);
+
     ctrlc::set_handler(move || {
         log::info!("Recieved SIGTERM!");
-        if already_killed.swap(true, Ordering::Relaxed) {
+        if shutdown.swap(true, Ordering::Relaxed) {
             log::error!("Abort!");
             std::process::exit(1);
         }
@@ -56,19 +58,9 @@ fn main() {
 
     log::info!("Starting automatic retry process");
     loop {
-        let res = rx.recv_timeout(config.retry_handler_interval);
-        match res {
-            Ok(_) => {
-                log::info!("Shutting down");
-                break;
-            }
-            Err(err) => match err {
-                RecvTimeoutError::Disconnected => {
-                    log::info!("Shutting down?");
-                    break;
-                }
-                RecvTimeoutError::Timeout => {}
-            },
+        if sleep_safe(config.retry_handler_interval, &rx) {
+            log::info!("Shutting down");
+            break;
         }
         log::debug!("Still alive - time to scan");
         let res = do_retry_check(&mut client, &config, &client_name);

@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use std::sync::mpsc;
 use std::time::Duration;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -73,5 +74,17 @@ pub fn get_redis_connection(client: &mut redis::Client, name: &str) -> redis::Co
                 log::info!("Failed to connect to redis: {}", err);
             }
         }
+    }
+}
+
+/// Sleeps for `duration` unless a shutdown command comes in.
+/// Returns `true` if the process should now exit
+pub fn sleep_safe(duration: Duration, chan: &mpsc::Receiver<()>) -> bool {
+    match chan.recv_timeout(duration) {
+        Ok(_) => true,
+        Err(err) => match err {
+            mpsc::RecvTimeoutError::Disconnected => true,
+            mpsc::RecvTimeoutError::Timeout => false,
+        },
     }
 }

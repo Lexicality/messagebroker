@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 use crate::message::Message;
-use redis::{from_redis_value, Commands, ConnectionLike, ErrorKind as RedisErrorKind, RedisResult};
+use redis::{
+    from_redis_value, Commands, ConnectionLike, ErrorKind as RedisErrorKind, RedisResult,
+    Value as RedisValue,
+};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -31,8 +34,10 @@ pub fn get_handler_filters<C: ConnectionLike>(
     filter_key: &str,
     con: &mut C,
 ) -> RedisResult<HandlerFilters> {
+    log::debug!("Fetching handlers");
     let res = con.hgetall(filter_key)?;
     let res: HashMap<String, String> = from_redis_value(&res)?;
+    log::trace!("Found handlers {:?}", res);
     Ok(res
         .iter()
         .map(|(k, v)| {
@@ -88,7 +93,12 @@ pub fn process_one<C: ConnectionLike>(
     con: &mut C,
     handlers: &HandlerFilters,
 ) -> RedisResult<()> {
-    let message: Message = from_redis_value(&con.brpop(queue_key, timeout)?)?;
+    let res: RedisValue = con.brpop(queue_key, timeout)?;
+    if res == RedisValue::Nil {
+        // BRPOP returns nil on timeout so immediately return control upstream
+        return Ok(());
+    }
+    let (_, message) = from_redis_value::<(String, Message)>(&res)?;
 
     log::trace!(
         "Recieved {} message: {:?}",
