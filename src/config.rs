@@ -37,6 +37,9 @@ pub struct Config {
 
     #[serde(default = "default_filter_update_interval")]
     pub filter_update_interval: Duration,
+
+    #[serde(default)]
+    pub sentry_dsn: String,
 }
 
 fn default_redis_url() -> Url {

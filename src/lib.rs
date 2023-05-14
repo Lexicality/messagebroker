@@ -13,6 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use config::Config;
+use std::borrow::Cow;
+use std::env;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -87,4 +90,34 @@ pub fn sleep_safe(duration: Duration, chan: &mpsc::Receiver<()>) -> bool {
             mpsc::RecvTimeoutError::Timeout => false,
         },
     }
+}
+
+pub fn logging_init() {
+    let log_env = env_logger::Env::default().filter_or("LOG_LEVEL", "info");
+    // log_env.filter(filter_env)
+    let actual_logger = env_logger::Builder::from_env(log_env).build();
+    let log_level = actual_logger.filter();
+    let sentry_logger = sentry_log::SentryLogger::with_dest(actual_logger);
+
+    log::set_boxed_logger(Box::new(sentry_logger)).expect("Unable to configure logging");
+    log::set_max_level(log_level);
+}
+
+pub fn sentry_init(config: &Config) -> sentry::ClientInitGuard {
+    let release = env::var("SENTRY_RELEASE")
+        .or_else(|_| env::var("GIT_COMMIT"))
+        .map_or(None, |val| Some(Cow::Owned(val)));
+
+    let environment = env::var("SENTRY_ENVIRONMENT")
+        .or_else(|_| env::var("SENTRY_ENV"))
+        .unwrap_or("unconfigured".to_owned());
+
+    sentry::init((
+        config.sentry_dsn.clone(),
+        sentry::ClientOptions {
+            release,
+            environment: Some(Cow::Owned(environment)),
+            ..Default::default()
+        },
+    ))
 }

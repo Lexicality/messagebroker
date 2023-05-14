@@ -17,8 +17,8 @@
 use backoff::backoff::Backoff;
 use gethostname::gethostname;
 use messagebroker::broker::{get_handler_filters, process_one};
-use messagebroker::sleep_safe;
 use messagebroker::{config::get_config, get_redis_connection};
+use messagebroker::{logging_init, sentry_init, sleep_safe};
 use redis::{ConnectionLike, ErrorKind as RedisErrorKind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -29,7 +29,9 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: usize = 10;
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let config = get_config();
+    logging_init();
+    let _guard = sentry_init(&config);
 
     let (tx, rx) = channel();
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -53,7 +55,6 @@ fn main() {
         .with_max_elapsed_time(None)
         .build();
 
-    let config = get_config();
     let mut client =
         redis::Client::open(config.redis_url).expect("The REDIS_URL config value must be correct");
 
@@ -81,6 +82,7 @@ fn main() {
             match res {
                 Ok(v) => handler_filters = v,
                 Err(err) => {
+                    sentry::capture_error(&err);
                     log::error!("Failed to fetch handler filters: {}", err);
                     let duration = backoff.next_backoff().unwrap_or(MAX_BACKOFF);
                     log::debug!("Sleeping for {} seconds", duration.as_secs());
@@ -105,12 +107,14 @@ fn main() {
         if let Err(err) = res {
             match err.kind() {
                 RedisErrorKind::Serialize | RedisErrorKind::TypeError => {
+                    sentry::capture_error(&err);
                     log::error!("Failed to parse message: {}", err);
                     // That's fine we'll get the next one
                     continue;
                 }
                 RedisErrorKind::TryAgain => continue,
                 _ => {
+                    sentry::capture_error(&err);
                     log::error!("Failed to route a message: {}", err);
                     let duration = backoff.next_backoff().unwrap_or(MAX_BACKOFF);
                     log::debug!("Sleeping for {} seconds", duration.as_secs());

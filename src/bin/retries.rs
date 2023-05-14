@@ -17,8 +17,8 @@
 use gethostname::gethostname;
 use messagebroker::broker::check_for_retries;
 use messagebroker::config::Config;
-use messagebroker::sleep_safe;
 use messagebroker::{config::get_config, get_redis_connection};
+use messagebroker::{logging_init, sentry_init, sleep_safe};
 use redis::{Client, RedisResult};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -31,7 +31,9 @@ fn do_retry_check(client: &mut Client, config: &Config, client_name: &str) -> Re
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let config = get_config();
+    logging_init();
+    let _guard = sentry_init(&config);
 
     let (tx, rx) = channel();
     let shutdown = AtomicBool::new(false);
@@ -49,7 +51,6 @@ fn main() {
     let hostname = gethostname().to_string_lossy().to_lowercase();
     let client_name = format!("broker:retry_handler:{}", hostname);
 
-    let config = get_config();
     let mut client = redis::Client::open(config.redis_url.clone())
         .expect("The REDIS_URL config value must be correct");
 
@@ -65,6 +66,7 @@ fn main() {
         log::debug!("Still alive - time to scan");
         let res = do_retry_check(&mut client, &config, &client_name);
         if let Err(err) = res {
+            sentry::capture_error(&err);
             log::error!("Retry check failed: {}", err);
             // it's probably fine to continue
             continue;
