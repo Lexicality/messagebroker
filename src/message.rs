@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /*
  * Copyright 2023 Lexi Robinson
  *
@@ -65,10 +64,6 @@ const PYTHON_TOSTR_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f%";
 impl Message {
     pub fn get(&self, key: &'static str) -> Option<&JSONValue> {
         self.raw.get(key)
-    }
-
-    pub fn set(&mut self, key: &'static str, value: JSONValue) {
-        self.raw[key] = value;
     }
 
     pub fn only_for(&self) -> Option<Vec<&String>> {
