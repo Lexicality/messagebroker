@@ -32,9 +32,6 @@ pub struct Config {
     #[serde(default = "default_retry_after")]
     pub retry_messages_after: Duration,
 
-    #[serde(default = "default_retry_interval")]
-    pub retry_handler_interval: Duration,
-
     #[serde(default = "default_filter_update_interval")]
     pub filter_update_interval: Duration,
 
@@ -61,10 +58,6 @@ fn default_retry_after() -> Duration {
     // 12 hours seems like it's long enough to cause exciting problems around data
     // consistency but who am I to judge genius?
     Duration::from_secs(12 * 60 * 60)
-}
-
-fn default_retry_interval() -> Duration {
-    Duration::from_secs(60)
 }
 
 fn default_filter_update_interval() -> Duration {

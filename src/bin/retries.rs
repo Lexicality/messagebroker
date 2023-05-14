@@ -14,39 +14,17 @@
  * limitations under the License.
  */
 
+use std::process::ExitCode;
+
 use gethostname::gethostname;
 use messagebroker::broker::check_for_retries;
-use messagebroker::config::Config;
 use messagebroker::{config::get_config, get_redis_connection};
-use messagebroker::{logging_init, sentry_init, sleep_safe};
-use redis::{Client, RedisResult};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
+use messagebroker::{logging_init, sentry_init};
 
-fn do_retry_check(client: &mut Client, config: &Config, client_name: &str) -> RedisResult<()> {
-    // This check happens so infrequently it's more efficient to start a new
-    // connection every time
-    let mut con = get_redis_connection(client, client_name);
-    check_for_retries(config.retry_messages_after, &mut con)
-}
-
-fn main() {
+fn main() -> ExitCode {
     let config = get_config();
     logging_init();
     let _guard = sentry_init(&config);
-
-    let (tx, rx) = channel();
-    let shutdown = AtomicBool::new(false);
-
-    ctrlc::set_handler(move || {
-        log::info!("Recieved SIGTERM!");
-        if shutdown.swap(true, Ordering::Relaxed) {
-            log::error!("Abort!");
-            std::process::exit(1);
-        }
-        tx.send(()).expect("Tried to announce sigterm")
-    })
-    .expect("Error setting Ctrl-C handler");
 
     let hostname = gethostname().to_string_lossy().to_lowercase();
     let client_name = format!("broker:retry_handler:{}", hostname);
@@ -54,22 +32,14 @@ fn main() {
     let mut client = redis::Client::open(config.redis_url.clone())
         .expect("The REDIS_URL config value must be correct");
 
-    do_retry_check(&mut client, &config, &client_name)
-        .expect("The first retry check should succeed");
-
-    log::info!("Starting automatic retry process");
-    loop {
-        if sleep_safe(config.retry_handler_interval, &rx) {
-            log::info!("Shutting down");
-            break;
-        }
-        log::debug!("Still alive - time to scan");
-        let res = do_retry_check(&mut client, &config, &client_name);
-        if let Err(err) = res {
+    let mut con = get_redis_connection(&mut client, &client_name);
+    let res = check_for_retries(config.retry_messages_after, &mut con);
+    match res {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(err) => {
             sentry::capture_error(&err);
             log::error!("Retry check failed: {}", err);
-            // it's probably fine to continue
-            continue;
+            ExitCode::FAILURE
         }
     }
 }
