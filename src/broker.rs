@@ -204,6 +204,52 @@ fn process_executing<C: ConnectionLike>(
     return Ok(());
 }
 
+fn check_executing_batch<C: ConnectionLike>(last_cursor: u64, con: &mut C) -> RedisResult<u64> {
+    let res = redis::cmd("SCAN")
+        .arg(last_cursor)
+        .arg("MATCH")
+        .arg("q:*:executing:*")
+        .arg("TYPE")
+        .arg("string")
+        .query(con)?;
+
+    let (next_cursor, batch) = from_redis_value::<(u64, Vec<String>)>(&res)?;
+    let batch_size = batch.len();
+    log::trace!("Got {} keys with cursor {}", batch_size, next_cursor);
+
+    if batch_size == 0 {
+        log::trace!("All the keys were filtered out!");
+        return Ok(next_cursor);
+    }
+
+    let mut pipe = redis::Pipeline::with_capacity(batch_size * 2);
+
+    for key in batch {
+        process_executing(&key, con, &mut pipe)?;
+    }
+
+    if pipe.cmd_iter().count() > 0 {
+        pipe.query(con)?;
+    } else {
+        log::trace!("No keys needed to be retried");
+    }
+
+    return Ok(next_cursor);
+}
+
+pub fn check_for_retries<C: ConnectionLike>(con: &mut C) -> RedisResult<()> {
+    let mut cursor = 0;
+    log::trace!("Searching for currently executing entries");
+    loop {
+        cursor = check_executing_batch(cursor, con)?;
+        if cursor == 0 {
+            break;
+        }
+    }
+    log::trace!("Done");
+    Ok(())
+}
+
 #[cfg(test)]
 mod test_get_handler_filters {
     use super::{get_handler_filters, HandlerFilter, FILTER_KEY};
