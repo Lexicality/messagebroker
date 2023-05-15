@@ -59,7 +59,7 @@ impl FromRedisValue for Message {
 }
 
 // Because of course we use `str()` over `isoformat` with a naive datetime
-const PYTHON_TOSTR_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f%";
+const PYTHON_TOSTR_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f";
 
 impl Message {
     /// (maybe) gets a key from the raw JSON dict
