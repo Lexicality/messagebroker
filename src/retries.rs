@@ -67,10 +67,8 @@ fn process_executing<C: ConnectionLike>(
     log::trace!("Processing started at {}", start_time);
 
     let now = chrono::Utc::now();
-    let grace_period = chrono::Duration::from_std(retry_after).unwrap();
-    // Possibly this will break in 2038 but I think that'll be the least of our
-    // worries if this code is still somehow in production
-    if start_time.checked_add_signed(grace_period).unwrap() > now {
+    let retry_after = chrono::Duration::from_std(retry_after).unwrap();
+    if now.signed_duration_since(start_time) < retry_after {
         // Still plenty of time to process the message
         log::debug!("Ignoring the message for now");
         return Ok(());
