@@ -17,9 +17,9 @@
 use std::process::ExitCode;
 
 use gethostname::gethostname;
-use messagebroker::broker::check_for_retries;
-use messagebroker::{config::get_config, get_redis_connection};
-use messagebroker::{logging_init, sentry_init};
+use messagebroker::config::get_config;
+use messagebroker::retries::check_for_retries;
+use messagebroker::{get_redis_connection, logging_init, sentry_init};
 
 fn main() -> ExitCode {
     let config = get_config();

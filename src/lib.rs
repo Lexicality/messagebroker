@@ -25,6 +25,7 @@ const WAIT_DURATION: Duration = Duration::from_secs(10);
 pub mod broker;
 pub mod config;
 mod message;
+pub mod retries;
 
 pub fn get_and_validate_connection(
     client: &mut redis::Client,

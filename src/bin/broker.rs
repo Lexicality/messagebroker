@@ -17,8 +17,8 @@
 use backoff::backoff::Backoff;
 use gethostname::gethostname;
 use messagebroker::broker::{get_handler_filters, process_one};
-use messagebroker::{config::get_config, get_redis_connection};
-use messagebroker::{logging_init, sentry_init, sleep_safe};
+use messagebroker::config::get_config;
+use messagebroker::{get_redis_connection, logging_init, sentry_init, sleep_safe};
 use redis::{ConnectionLike, ErrorKind as RedisErrorKind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
