@@ -18,6 +18,11 @@ use redis::{from_redis_value, Commands, ConnectionLike, ErrorKind as RedisErrorK
 use serde_json::json;
 use std::time::Duration;
 
+/// Loads and processes a single executing key to see if it needs to be retried or
+/// possibly deleted
+///
+/// Commands for retries and deletions will be added to the pipe rather than executed
+/// immediately on the connection
 fn process_executing<C: ConnectionLike>(
     key: &str,
     retry_after: Duration,
@@ -25,6 +30,7 @@ fn process_executing<C: ConnectionLike>(
     pipe: &mut redis::Pipeline,
 ) -> RedisResult<()> {
     log::debug!("Checking message at {} to see if it's timed out", key);
+
     let res = from_redis_value::<Message>(&con.get(key)?);
     let message = match res {
         Ok(message) => message,
@@ -37,11 +43,13 @@ fn process_executing<C: ConnectionLike>(
             _ => return Err(err),
         },
     };
+
     log::trace!(
         "Found a {} message with uuid {}",
         message.message_type,
         message.uuid
     );
+
     let start_time = match message.start_time() {
         Some(v) => v,
         None => {
@@ -57,6 +65,7 @@ fn process_executing<C: ConnectionLike>(
     };
 
     log::trace!("Processing started at {}", start_time);
+
     let now = chrono::Utc::now();
     let grace_period = chrono::Duration::from_std(retry_after).unwrap();
     // Possibly this will break in 2038 but I think that'll be the least of our
@@ -66,11 +75,16 @@ fn process_executing<C: ConnectionLike>(
         log::debug!("Ignoring the message for now");
         return Ok(());
     }
+
     log::debug!("Message is too old! Retrying!");
 
     // Delete the message so we don't reprocess it
     pipe.del(key);
 
+    // Nominally speaking, every message that's being executed should have an `only_for`
+    // set by the broker before it even reaches anything that can execute it, but we're
+    // working with unstructured JSON here so there's always a chance for things to go
+    // horribly horribly wrong
     if let Some(only_for) = message.only_for() {
         let mut message = message.raw.clone();
         // "//Override start_time" (??? - the service will do this itself)
@@ -85,11 +99,10 @@ fn process_executing<C: ConnectionLike>(
             pipe.lpush(queue_name, message.clone());
         }
     } else {
-        // On the one hand, the `key` variable straight up has the queue name in
-        // it which we could extract, but on the other hand "this should never
-        // happen" since the broker sets this field on every message it sends
-        // out so I guess it's fine to have this case and Sentry should alert us
-        // if this warning starts going off
+        // On the one hand, the `key` variable straight up has the queue name in it
+        // which we could extract, but on the other hand "this should never happen" so I
+        // guess it's fine to have this case and Sentry should alert us if this warning
+        // starts going off
         log::warn!(
             "The {} ({}) message at {} doesn't have a valid 'only_for' field so we can't retry it",
             message.message_type,
@@ -101,6 +114,14 @@ fn process_executing<C: ConnectionLike>(
     Ok(())
 }
 
+/// Handles a single bulk reply from SCAN
+///
+/// Specifically, all the actions for the keys in this reply are processed in a single
+/// pipeline at the end to ensure we get some level of bulk performance but without the
+/// risk of doing too much bulk in one go and having Redis get sad at us
+///
+/// This is its own helper function purely to make the exit conditions for the loop
+/// easier to manage
 fn check_executing_batch<C: ConnectionLike>(
     last_cursor: u64,
     retry_after: Duration,
@@ -114,6 +135,7 @@ fn check_executing_batch<C: ConnectionLike>(
 
     let (next_cursor, batch) = from_redis_value::<(u64, Vec<String>)>(&res)?;
     let batch_size = batch.len();
+
     log::trace!("Got {} keys with cursor {}", batch_size, next_cursor);
 
     if batch_size == 0 {
@@ -127,6 +149,8 @@ fn check_executing_batch<C: ConnectionLike>(
         process_executing(&key, retry_after, con, &mut pipe)?;
     }
 
+    // Strictly speaking this should short-circuit the evaluation by itself and not
+    // actually talk to Redis but by doing it like this we get a nice log line :)
     if pipe.cmd_iter().count() > 0 {
         pipe.query(con)?;
     } else {
@@ -136,6 +160,12 @@ fn check_executing_batch<C: ConnectionLike>(
     Ok(next_cursor)
 }
 
+/// Scans the entire redis keyspace for currently executing keys and processes all of them.
+///
+/// A failure here doesn't necessarily mean no keys were processed as they're done in
+/// batches and the very last batch could fail while all the previous ones suceeded.
+///
+/// This function is safe to call again immediately if needed.
 pub fn check_for_retries<C: ConnectionLike>(retry_after: Duration, con: &mut C) -> RedisResult<()> {
     let mut cursor = 0;
     log::debug!("Searching for currently executing entries");

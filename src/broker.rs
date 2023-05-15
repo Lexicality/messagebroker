@@ -25,6 +25,11 @@ pub enum HandlerFilter {
 }
 pub type HandlerFilters = HashMap<String, HandlerFilter>;
 
+/// Fetches the list of known queues and their handlers
+///
+/// This is somewhat complicated by the way filters were introduced since any pre-filter
+/// code (which to be fair shouldn't exist - but still might) will set an empty string
+/// and expect all messages to be delivered to it regardless.
 pub fn get_handler_filters<C: ConnectionLike>(
     filter_key: &str,
     con: &mut C,
@@ -40,16 +45,25 @@ pub fn get_handler_filters<C: ConnectionLike>(
             if v.is_empty() {
                 return (k.to_owned(), HandlerFilter::AllMessages);
             }
+            // Trim spaces because (???) the code that generates these can never add spaces
             let filters = v.split(',').map(|v| v.trim().to_owned());
             (k.to_owned(), HandlerFilter::SomeMessages(filters.collect()))
         })
         .collect())
 }
 
+/// Provides a list of queues that a message should be forwarded to
+///
+/// If the message has its own plan of where to be sent this function validates that
+/// those queues actually exist before returning them, otherwise it checks to see what
+/// handlers are looking for this message type.
+///
+/// This function may return an empty vector if no valid queue wants it.
 fn get_queues_for_message<'a>(
     message: &'a Message,
     handlers: &'a HandlerFilters,
 ) -> Vec<&'a String> {
+    // Handle the case where the message pre-requests to be delivered to certain queues
     let only_for = message.only_for();
     if let Some(only_for) = only_for {
         return only_for
@@ -71,6 +85,8 @@ fn get_queues_for_message<'a>(
             .collect();
     };
 
+    // Otherwise match the message against our queue list
+    // TODO: This would probably work a lot more efficiently inside-out as {message_type: [queues]}
     return handlers
         .iter()
         .filter_map(|(queue_name, filter)| match filter {
@@ -82,6 +98,13 @@ fn get_queues_for_message<'a>(
         .collect();
 }
 
+/// Pops a single item off the broker queue and routes it
+///
+/// The timeout argument has the same semantics as BRPOP, it's in seconds - 0 to block
+/// forever (but probably don't do that)
+///
+/// This function will return an error if the popped message is invalid - any callers
+/// will need to be aware of and handle that case
 pub fn process_one<C: ConnectionLike>(
     queue_key: &str,
     timeout: usize,

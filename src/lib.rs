@@ -27,17 +27,30 @@ pub mod config;
 mod message;
 pub mod retries;
 
+/// Asks the supplied redis client for an active connection and then confirms that it is
+/// actually active by setting the client name to the provided string.
+///
+/// Note that the name has all spaces replaced with dashes to conform to Redis's rules
+/// around client names. Ideally don't send any spaces though.
+///
+/// This will return an appropriate error if the client cannot connect or if the server
+/// is not happy with our new name.
 pub fn get_and_validate_connection(
     client: &mut redis::Client,
     name: &str,
 ) -> redis::RedisResult<redis::Connection> {
     log::debug!("Attempting to connect");
 
+    // This will return success if we have a connection to the server, but doesn't
+    // confirm if it is actually active (eg able to accept commands)
     let mut con = client.get_connection_with_timeout(CONNECT_TIMEOUT)?;
 
     log::debug!("Connection successful, setting name");
 
-    // This will fail if we're not actually connected to the server
+    // By setting our name we confirm that the server is valid and happy.
+    //
+    // It also has the handy side effect of naming our connection which makes debugging
+    // things easier too!
     redis::cmd("CLIENT")
         .arg("SETNAME")
         .arg(name.replace(' ', "-"))
@@ -48,6 +61,12 @@ pub fn get_and_validate_connection(
     Ok(con)
 }
 
+/// This function blocks until an active connection is available from redis
+///
+/// It will panic if the client has been misconfigured, eg with an invalid hostname or
+/// some other problem that redis considers and "InvalidClientConfig" error.
+///
+/// All other errors such as timeouts will simply be retried until there is a success.
 pub fn get_redis_connection(client: &mut redis::Client, name: &str) -> redis::Connection {
     log::info!(
         "Attempting to connect to Redis with info {:?}",
@@ -82,6 +101,7 @@ pub fn sleep_safe(duration: Duration, chan: &mpsc::Receiver<()>) -> bool {
     }
 }
 
+/// Sets up the global logging config with appropriate defaults & a connection to Sentry
 pub fn logging_init() {
     let log_env = env_logger::Env::default().filter_or("LOG_LEVEL", "info");
     // log_env.filter(filter_env)
@@ -93,6 +113,10 @@ pub fn logging_init() {
     log::set_max_level(log_level);
 }
 
+/// Configures Sentry with appropriate environment variables
+///
+/// This should be done as early as possible in the service lifecycle and the returned
+/// value should not be dropped until the very end
 pub fn sentry_init(config: &Config) -> sentry::ClientInitGuard {
     let release = env::var("SENTRY_RELEASE")
         .or_else(|_| env::var("GIT_COMMIT"))

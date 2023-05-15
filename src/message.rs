@@ -62,10 +62,16 @@ impl FromRedisValue for Message {
 const PYTHON_TOSTR_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f%";
 
 impl Message {
+    /// (maybe) gets a key from the raw JSON dict
     pub fn get(&self, key: &'static str) -> Option<&JSONValue> {
         self.raw.get(key)
     }
 
+    /// Gets, validates and normalises the "only_for" key from the message
+    ///
+    /// This is somewhat complicated by the fact that it's sometimes a string and
+    /// sometimes an array in various different places so I've solved the issue by just
+    /// making it always be an array even if it starts off as a string
     pub fn only_for(&self) -> Option<Vec<&String>> {
         let value = self.get("only_for")?;
         match value {
@@ -100,6 +106,11 @@ impl Message {
         }
     }
 
+    /// Gets and parses the "start_date" field of the message
+    ///
+    /// This handles the fact that it's possible the field was encoded by calling
+    /// `str()` on a python datetime which no sensible human would do given it is not
+    /// guaranteed to be a stable format but maybe someone would. Just maybe :(
     pub fn start_time(&self) -> Option<DateTime<Utc>> {
         let start_time = self.get("start_time")?;
         let start_time = match start_time {
